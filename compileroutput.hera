@@ -1,0 +1,5 @@
+CBON()
+
+    SET(R2, 3)
+    SET(R1, 3)
+    ADD(R3, R2, R1)

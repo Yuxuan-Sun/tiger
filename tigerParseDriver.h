@@ -1,0 +1,77 @@
+#if ! defined TIGER_PARSE_DRIVER_H
+#define TIGER_PARSE_DRIVER_H
+
+#include "AST.h"
+// Define the types of the attributes of various kinds of nodes in the parse tree
+struct expAttrs {
+		A_exp AST;
+		int height;
+};
+struct expListAttrs {
+		A_expList AST;
+};
+struct varAttrs {
+		A_var AST;
+};
+struct decAttrs {
+		A_dec AST;
+};
+struct decListAttrs
+{
+		A_decList AST;
+};
+struct fieldAttrs {
+		A_field AST;
+};
+struct fieldListAttrs
+{
+		A_fieldList AST;
+};
+struct fundecAttrs
+{
+		A_fundec AST;
+};
+struct fundecListAttrs
+{
+		A_fundecList AST;
+};
+struct tyAttrs
+{
+		A_ty AST;
+};
+
+
+
+struct  flexExampleAttrs { int height; int value; std::string __str__() { return ":-("; } };
+
+#include "tiger-grammar.tab.hpp"
+
+
+// The tigerParseDriver class is closely based on the example from the documentation (i.e., copied and edited)
+// https://www.gnu.org/software/bison/manual/html_node/Calc_002b_002b-Parsing-Driver.html#Calc_002b_002b-Parsing-Driver
+class tigerParseDriver {
+public:
+	tigerParseDriver();
+
+	A_root_ *AST;  // parsing will set this to the root of the AST, if it succeeds
+
+	// Run the parser on file f, return 0 on success.
+	int parse (const std::string& f);
+	// The name of the file being parsed.
+	// Used later to pass the file name to the location tracker.
+	std::string fileName;
+
+	// Error handling.
+	void error (const yy::location& l, const std::string& m);
+	void error (const std::string& m);
+};
+
+// Tell Flex the lexer's prototype ...
+# define YY_DECL \
+	yy::tigerParser::symbol_type yylex (tigerParseDriver &)
+// ... and declare it for the parser's sake.
+YY_DECL;
+
+
+
+#endif

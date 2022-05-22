@@ -1,0 +1,638 @@
+#if ! defined TIGER_STDLIB_INCLUDED
+#define TIGER_STDLIB_INCLUDED 1
+
+#if ! defined DAVE_TESTING_CONCAT
+#define DAVE_TESTING_CONCAT 1  /* pretty sure this works now */
+#endif
+
+//
+//	NOTE: functions can be called with lower-case names (e.g., size, as is done in tiger),
+//		or with upper-case names (e.g., SIZE, as is frequently done in hand-written assembly code)
+//	NOTE: some functions are not yet implemented; those don't have upper-case labels
+//
+//  REMINDER: Never use R11, since it's also Rt, but easy to forget and use both names for two live values :-(
+
+// This is the HERA standard library for TIGER,
+//  containing the functions listed by Appel (A.4) plus a few more (*).
+// Those marked ** are generally not called explicitly from Tiger programs.
+// In this (the "registers" variant),
+//  parameters are passed in registers R1, R2, R3... etc. (fortunately no stdlib functions have more than 11 parameters)
+//  the result is retured in register R1
+// See "Function Calls with Parameters in Registers, ``Caller-Save'' of Registers"
+//  under Idioms in the HERA documentation.
+// FOR THE MOST PART, these functions typically only use:
+//  * The parameter/return registers
+//  * The function call linkage registers (R12-16, using the "CALL(FP_alt, label)" convention of the "Caller Save" section of the HERA booklet)
+//  * Registers 9, 10, and 11 for temporary storage, except tstrcmp which uses 6-11 for temporary storage
+//  * Note that "getint" is an exception and leaves intact all registers but R1, to simplify CMSC 245
+//  ==========================================================================================
+//  ==> Thus, they are compatible with R1-3=Param/ret, R4-7=callee-save, R8-11=caller-save <==
+//  ==>    EXCEPT FOR TSTRCMP, WHICH SHOULD PROABABLY BE REVISED TO BE SO                  <==
+//  ==>    (and note that getint leaves registers other than R1 intact)                    <==
+//  ==========================================================================================
+//
+// For library configuration parameters (e.g. if you are in CS356),
+//   see the "tunable parameters" section below
+//
+// STRING MANIPULATION
+//    ord(s:string) : int   // returns the character number for a 1-char string
+//    chr(i:int) : string   // returns a 1-char string such that ord(chr(x)) == x
+//    size(s:string) : int  // length of the string; also works for Tiger arrays
+//    substring(s:string, first:int, n:int) : string  // indices start at 0
+//    concat(s1:string, s2:string) : string           // concatenation
+// ** tstrcmp(s1:string, s2:string) : int
+//       // tstrcmp(a,b) returns neg # if a < b, 0 if =, pos # if a > b
+//
+// ARITHMETIC/BOOLEAN OPERATIONS
+// ** div(num:int, den:int): int    // finds floor(num/den), assuming no overflow
+// ** mod(num:int, den:int): int    // finds the remainder of num/den
+//    not(i:int) : int              // binary negation; makes false true and vice-versa
+//    
+// OUTPUT AND INPUT
+// *  getchar_ord(): int    // read one character, return as a number (like C's getchar(), but no EOF check)
+// *  putchar_ord(i:int)    // print the character chr(i) (like C's putchar(c))
+//    flush()               // makes sure output has been written to the terminal
+// *  printint(i:int)       // print an integer (currently uses base 16)
+// *  printbool(b:bool)     // print true or false
+//    print(s:string)       // print a string
+// *  println(s:string)		// print s and a newline character
+//    getchar() : string    // read a one-character string
+// *  ungetchar()	    // make next 'getchar' or 'getchar_ord' return previously read character
+// *  getline() : string    // read a one-line string
+// *  getint() : int        // read an integer (not yet implemented except in HERA-C) ... LEAVES REGISTERS INTACT for convenience
+//  
+//
+// OTHER
+//    exit(i:int)                   // halts the program
+// ** malloc(n_cells: int): int     // address of allocated space
+// ** free(address: int)            // release region returned by above (currently does nothing)
+//
+//   
+// Strings are allocated as they are in the HERA-C simulator:
+//   Memory cell 16384 is assumed to contain the address of the
+//   next available memory cell, and strings are built there.
+//
+// WARNING -- all of these assume that the carry block flag is set,
+//   as is the case when running tiger programs.
+//
+// Technically, all of these functions should be written in HERA.
+// However, since the simulator does not include an operating
+//  system, we can't do system calls for the I/O stuff.
+// Also, I don't have time to mess with all of this.
+// So much is written in C++, though this fraction decreases with time...
+
+// Tunable library configuration parameters are
+//	  WROTE_CS356_MALLOC, WROTE_CS356_IO, INTEGER_IO_IN_HEX, USE_IOSTREAMS, ALWAYS_FLUSH
+// (if needed, these should be set with #define
+//  before the #include of this file or its "-data").:
+//
+// Parameter WROTE_CS356_MALLOC -- if defined as 1 (True),
+//  something else _must_ define a HERA function "malloc"
+
+#if ! defined WROTE_CS356_MALLOC
+#define WROTE_CS356_MALLOC 0
+#endif
+
+// Parameter WROTE_CS356_IO -- if defined as 1 (True),
+//  something else _must_ define HERA functions:
+//	getchar_ord (if used)
+//	ungetchar   (if used)
+//	putchar_ord (if used)
+//	flush       (if used)
+//	getchar
+//	getline
+//	print
+// (also makes the default for IOSTREAMS be false not true)
+
+#if ! defined WROTE_CS356_IO
+#define WROTE_CS356_IO 0
+#endif
+
+
+// Parameter INTEGER_IO_IN_HEX (currently defaults to 1 (true) due to bugs in decimal IO)
+//  makes Integer IO be in hexidecimal
+
+#if ! defined INTEGER_IO_IN_HEX
+#define INTEGER_IO_IN_HEX 1
+#endif
+
+// Parameter IOSTREAMS useful mostly for HERA-C (note also ALWAYS_FLUSH)
+
+#if ! defined USE_IOSTREAMS
+#if WROTE_CS356_IO || ! defined HERA_C
+#define USE_IOSTREAMS 0
+#else
+#define USE_IOSTREAMS 1
+#endif
+#endif
+// can't just include iostream here, as this file is typically #include'd inside HERA_main()  :-(
+
+
+
+// Parameter ALWAYS_FLUSH --- if defined AND USE_IOSTREAMS is on,
+//  every call to print, printint, etc. will do a flush rather than waiting for end-of-line to show output
+// Currently (Spring 2012) this defaults to ON for CMSC 350,
+//  even though in future we should set it in HERA_main.cc)
+
+#if ! defined ALWAYS_FLUSH
+#define ALWAYS_FLUSH 1
+#endif
+
+#define UNDEFINED( )   SET(R1, TIGER_STDLIB_REG_UNIMPLEMENTED); CALL(FP_alt, print); HALT()
+
+#if USE_IOSTREAMS
+print(" ************************************************************************ ")
+print(" OOPS ... It looks like this program is about to run")
+print("          the first instructions from Tiger-stdlib-stack.hera") 
+print("          Did you forget to put a \"HALT()\" before including the library?")
+print(" ************************************************************************ ")
+#endif
+
+
+     HALT()   // Don't let program run into the library without a call
+     NOP()    // And make the program/library boundary visible in the debugger memory with this pattern
+     HALT()
+     HALT()
+
+//   ord(s:string) : int
+LABEL(ORD)
+LABEL(ord)
+     // Reg 1 <-- argument (address of string)
+     LOAD(R1,1,R1)  // Reg 1 now has the 1st character of the string
+     RETURN(FP_alt, PC_ret)
+
+ //   chr(i:int) : string
+////// LABEL(CHR)
+LABEL(chr)
+     INC(SP, 3)
+     STORE(PC_ret, 0,FP)
+     STORE(FP_alt, 1,FP)
+     STORE(r1, 2,FP)
+
+     SET(R1, 2)
+     MOVE(FP_alt, SP)
+     CALL(FP_alt, malloc) // now we've got 2 memory cells, R1 points to them
+     SET(Rt, 1)
+     STORE(Rt, 0,R1)	// length is 1
+     LOAD(Rt, 2,FP)	// the character
+     STORE(Rt, 1,R1)
+
+     LOAD(PC_ret, 0,FP)
+     LOAD(FP_alt, 1,FP)
+     DEC(SP, 3)
+     RETURN(FP_alt, PC_ret)
+
+//    size(s:string) : int
+LABEL(SIZE)
+LABEL(size)
+     // Reg 1 <-- argument (address of string)
+     LOAD(R1,0,R1)  // Reg 1 now has the size of string
+     RETURN(FP_alt, PC_ret)
+
+
+
+//   substring(s:string, first:int, n:int) : string
+////// LABEL(SUBSTRING)
+LABEL(substring)
+// vars & reg: sptr(1), nptr(2), n(3), tmp(4)
+// store needed registers
+   UNDEFINED( )			// To Do: ********************************** DAVE NEEDS TO FIX THIS ONE FOR CS350
+   RETURN(FP_alt, PC_ret)
+
+
+//   concat(s1:string, s2:string) : string
+LABEL(CONCAT)  // uses R11/Rt, R10, R9
+LABEL(concat)
+// vars & reg: s1ptr/s2ptr(1), nptr(2), n(3), tmp(4), tmp2(5)
+
+#if defined DAVE_TESTING_CONCAT
+// =============================   UNDER DEVELOPMENT   ======================
+     INC(SP, 5)
+     STORE(PC_ret, 0,FP)
+     STORE(FP_alt, 1,FP)
+     STORE(r1, 2,FP)	// s1 at FP+2
+     STORE(r2, 3,FP)	// s2 at FP+3
+
+/////  print("HOOOO")
+/////  print_reg(R1)
+/////  print_reg(R2)
+/////  print("HA")
+
+  // ALLOCATE memory
+     LOAD(R1, 0,R1)	// length of S1
+     LOAD(R2, 0,R2)	// length of S2
+     ADD(R1, R1,R2)	// length of result
+     STORE(R1, 4,FP)	// save length for later use
+     MOVE(FP_alt, SP)
+     CALL(FP_alt, malloc) // get enough memory cells, R1 points to them
+     LOAD(Rt, 4,FP)	// length
+     STORE(Rt, 0,R1)	// store length prefix
+
+/////  print_reg(R1)
+/////  (HERA_print_mem(0x4000, 0x10, false, false));
+
+  // set up destination pointer in Rt
+     MOVE(Rt, R1)
+     INC(Rt, 1)	// Rt is "where do we store the next character?
+
+  // set up source pointer for S1 in R10, size in R9
+     LOAD(R10, 2,FP)	// R10 is now S1
+     LOAD(R9, 0,R10)
+     INC(R10, 1)
+  // LOOP #1, move R9 chars from *R10 into *Rt, inc and dec. appropriately
+/////  print_reg(R9)
+     FLAGS(R9)
+     BZR(CONCAT_DONE_S1)
+   LABEL(CONCAT_COPY_S1)
+     LOAD(R2, 0,R10)
+/////  print_reg(Rt)
+     STORE(R2, 0,Rt)
+     INC(R10, 1)
+     INC(Rt, 1)
+     DEC(R9, 1)
+     BNZR(CONCAT_COPY_S1)
+   LABEL(CONCAT_DONE_S1)
+
+
+/////  print_reg(R1)
+/////  print_reg(Rt)
+/////  (HERA_print_mem(0x4000, 0x10, false, false));
+
+  // set up source pointer for S1 in R10, size in R9
+     LOAD(R10, 3,FP)	// R10 is now S2
+     LOAD(R9, 0,R10)
+     INC(R10, 1)
+  // LOOP #1, move R9 chars from *R10 into *Rt, inc and dec. appropriately
+     FLAGS(R9)
+     BZR(CONCAT_DONE_S2)
+   LABEL(CONCAT_COPY_S2)
+     LOAD(R2, 0,R10)
+     STORE(R2, 0,Rt)
+     INC(R10, 1)
+     INC(Rt, 1)
+     DEC(R9, 1)
+     BNZR(CONCAT_COPY_S2)
+   LABEL(CONCAT_DONE_S2)
+
+  // And, at last, return from the function     
+     LOAD(PC_ret, 0,FP)
+     LOAD(FP_alt, 1,FP)
+     DEC(SP, 5)
+     RETURN(FP_alt, PC_ret)
+// =============================   ABOVE UNDER DEVELOPMENT   ======================
+#endif
+   UNDEFINED( )			// To Do: ********************************** DAVE NEEDS TO FIX THIS ONE FOR CS350
+   RETURN(FP_alt, PC_ret)
+
+
+
+
+#define TSTRCMP_A	R6
+#define TSTRCMP_B	R7
+#define TSTRCMP_MIN_SZ	R8
+#define TSTRCMP_I	R9  /* for i = 0 to min_sz */
+#define TSTRCMP_A_CH_SZ	R10  /* character of A or size of A, at times */
+#define TSTRCMP_B_CH_SZ	R11  /* character of B or size of B, at times ... NOTE NO "NOT" OR REG BRANCH BELOW */
+
+// ** tstrcmp(s1:string, s2:string) : int
+////// LABEL(TSTRCMP)  // tiger strcmp -- like C strcmp
+LABEL(tstrcmp)  // tiger strcmp -- like C strcmp
+		// tstrcmp(a,b) returns neg # if a < b, 0 if =, pos # if a > b
+		//  Note that this is also similar to doing CMP(a,b)
+
+     UNDEFINED() // USES R11 wrong, also should save R6/7/8 :-(
+// Note no NOT or non-register-mode BR, so Rt/R11 should be available for a local var (see above)
+     LOAD(TSTRCMP_A_CH_SZ, 0,TSTRCMP_A)
+     LOAD(TSTRCMP_B_CH_SZ, 0,TSTRCMP_B)
+     CMP(TSTRCMP_A_CH_SZ,TSTRCMP_B_CH_SZ)
+     BLR(tstdlib_label_b_was_longer)
+     MOVE(TSTRCMP_MIN_SZ,TSTRCMP_A_CH_SZ)
+     BRR(tstdlib_label_got_min)
+     LABEL(tstdlib_label_b_was_longer)
+     MOVE(TSTRCMP_MIN_SZ,TSTRCMP_B_CH_SZ)
+     LABEL(tstdlib_label_got_min)	// Now have MIN_SZ SET
+// move to addresses of 1st "real" chars of a, b
+     INC(TSTRCMP_A,1)
+     INC(TSTRCMP_B,1)
+
+     SETLO(TSTRCMP_I,0)
+// while(I<MIN_SZ) {
+     LABEL(tstdlib_label_start_of_while_in_tstrcmp)
+     CMP(TSTRCMP_I,TSTRCMP_MIN_SZ)
+     BGER(tstdlib_label_get_out_of_while_in_tstrcmp)
+
+//  compare a[i] and b[i] next...
+     ADD(TSTRCMP_A_CH_SZ,TSTRCMP_I,TSTRCMP_A)	// a+size
+     LOAD(TSTRCMP_A_CH_SZ,0,TSTRCMP_A_CH_SZ)	// *(a+size)
+     ADD(TSTRCMP_B_CH_SZ,TSTRCMP_I,TSTRCMP_B)
+     LOAD(TSTRCMP_B_CH_SZ,0,TSTRCMP_B_CH_SZ)
+//  if (a[i] < b[i])
+     CMP(TSTRCMP_A_CH_SZ,TSTRCMP_B_CH_SZ)
+     BGER(tstdlib_label_not_a_smaller)
+     SET(R1,-1) //  	a<b so return -1
+     BRR(tstdlib_label_do_return)
+
+     LABEL(tstdlib_label_not_a_smaller)
+//  if (a[i] > b[i])
+     CMP(TSTRCMP_B_CH_SZ,TSTRCMP_A_CH_SZ)
+     BGER(tstdlib_label_not_b_smaller)
+     SET(R1,1)  //      a>b so return 1
+     BRR(tstdlib_label_do_return)
+
+     LABEL(tstdlib_label_not_b_smaller)
+     INC(TSTRCMP_I,1) // 	i++;
+     BRR(tstdlib_label_start_of_while_in_tstrcmp)
+
+     LABEL(tstdlib_label_get_out_of_while_in_tstrcmp)
+// return size(a) - size(b)
+
+     DEC(TSTRCMP_A, 1)	// go back down to sizes of A and B
+     LOAD(TSTRCMP_A_CH_SZ,0,TSTRCMP_A)	// size(A)
+     DEC(TSTRCMP_B, 1)	// go back down to sizes of A and B
+     LOAD(TSTRCMP_B_CH_SZ,0,TSTRCMP_B)	// size(B)
+     SUB(R1,TSTRCMP_A_CH_SZ,TSTRCMP_B_CH_SZ)		// R1 = size of a - size of b, 0 iff same size
+
+
+     LABEL(tstdlib_label_do_return)  // R1 had better be set already!
+     RETURN(FP_alt, PC_ret)
+
+
+// ** div(num:int, den:int): int
+LABEL(DIV)
+LABEL(div)
+#if defined HERA_C
+     print("\n\n*** WARNING: using temporary work-around for DIV in Tiger-stdlib-reg.hera, may be wrong for negative numbers ***\n\n")
+     // A TEMPORARY HACK, FOR NOW... MAY BE WRONG FOR NEGATIVES	
+     if (reg(R2) == 0) {
+          print("Error in Tiger-stdlib function 'div': dividing by 0")
+     } else {
+	  SET(R1, reg(R1)/reg(R2))
+     }
+     RETURN(FP_alt, PC_ret)
+#else
+     UNDEFINED()
+     RETURN(FP_alt, PC_ret)
+#endif
+
+// ** mod(num:int, den:int): int
+LABEL(MOD)
+LABEL(mod)
+#if defined HERA_C
+     print("\n\n*** WARNING: using temporary work-around for MOD in Tiger-stdlib-reg.hera, may be wrong for negative numbers ***\n\n")
+     SET(R1, reg(R1)%reg(R2))
+     RETURN(FP_alt, PC_ret)
+#else
+     UNDEFINED()
+     RETURN(FP_alt, PC_ret)
+#endif
+     
+
+
+
+//    not(i:int) : int
+LABEL(NOT)
+LABEL(not)
+	// Reg 1 <-- argument
+     CMP(R1,R0)
+     BZR(tstdlib_label_arg_was_false)
+     SET(R1,0)
+     BR(tstdlib_label_return_from_not)
+     LABEL(tstdlib_label_arg_was_false)
+     SET(R1,1)
+     LABEL(tstdlib_label_return_from_not)
+     RETURN(FP_alt, PC_ret)
+
+LABEL(EXIT)
+LABEL(exit)
+     HALT()
+
+
+LABEL(printbool)
+#if USE_IOSTREAMS
+     std::cout << (reg(R1))?"true":"false";
+#if ALWAYS_FLUSH
+	 std::cout.flush();
+#endif
+     RETURN(FP_alt, PC_ret)
+#else
+    UNDEFINED()
+#endif
+
+// *  printint(i:int)
+LABEL(PRINTINT)
+LABEL(printint)
+#if USE_IOSTREAMS
+     std::cout << reg(R1);
+#if ALWAYS_FLUSH
+	 std::cout.flush();
+#endif
+     RETURN(FP_alt, PC_ret)
+#else
+     UNDEFINED( )
+#endif
+
+
+// * getint() : int   FOR CONVENIENCE of CS245 students, this must leave registers >=R2 intact
+LABEL(GETINT)
+LABEL(getint)
+#if USE_IOSTREAMS
+     {
+       int i;
+       std::cin >> i;
+       SET(r1, i);
+     }
+     RETURN(FP_alt, PC_ret)
+#else
+// This has not been done in HERA yet -- just return 0; or, better yet, halt.
+     UNDEFINED( )
+#endif
+
+
+//   println(s:string)
+LABEL(PRINTLN)
+LABEL(println)
+	MOVE(R10, PC_ret)
+	MOVE(R9,  FP_alt)
+	MOVE(R8,  Rt)
+	CALL(FP_alt, print)
+	SET(R1, '\n')
+	CALL(FP_alt, putchar_ord)
+	MOVE(PC_ret, R10)
+	MOVE(FP_alt, R9)
+	MOVE(Rt,     R8)
+	RETURN(FP_alt, PC_ret)
+
+#if ! WROTE_CS356_IO
+// *  getchar_ord(): int    // read one character, return as a number (like C's getchar())
+LABEL(GETCHAR_ORD)
+LABEL(getchar_ord)
+#if USE_IOSTREAMS
+     {
+       char c;
+       std::cin.get(c);
+       SET(R1, c);
+     }
+#else
+/// NOT UPDATED FOR NO IOSTREAMS YET --- THIS NEEDS TO BE WRITTEN, PERHAPS?
+    UNDEFINED( )
+#endif
+     RETURN(FP_alt, PC_ret)
+
+
+// *  ungetchar()	    // make next input include most recently read character
+////// LABEL(UNGETCHAR)
+LABEL(ungetchar)
+     // Result is undefined if we've not done a getchar/getchar_ord/getline since last ungetchar or start
+     UNDEFINED( )  // NEED TO ADD A LOT TO getchar_ord TO MAKE THIS WORK
+
+     
+
+// *  putchar_ord(i:int)    // print the character chr(i) (like C's putchar(c))
+LABEL(PUTCHAR_ORD)
+LABEL(putchar_ord)
+#if USE_IOSTREAMS
+    std::cout << (char) (reg(R1));
+#if ALWAYS_FLUSH
+	 std::cout.flush();
+#endif
+#else
+#if defined HERA_C
+    Hprintchar((char) (reg(R1)));
+#else
+    UNDEFINED()
+#endif
+#endif
+    RETURN(FP_alt, PC_ret)
+
+//   print(s:string)
+LABEL(PRINT)
+LABEL(print)
+#if defined HERA_C
+#if defined HERA_C_DETECT_CALLS_TO_PRINT
+    HERA_C_DETECTED_A_CALL_TO_PRINT = true;
+#endif
+#if USE_IOSTREAMS
+     for (int __print_i=1; __print_i<=REFMEM(reg(R1)); __print_i++) \
+	 std::cout << (char) REFMEM(reg(R1) + __print_i);
+#if ALWAYS_FLUSH
+	 std::cout.flush();
+#endif
+#else
+     for (int __print_i=1; __print_i<=REFMEM(reg(R1)); __print_i++) \
+         Hprintchar((char) REFMEM(reg(R1) + __print_i));
+#endif
+#else
+     // left for CS356; try setting USE_IOSTREAMS until then
+     UNDEFINED()
+#endif
+     RETURN(FP_alt, PC_ret)
+
+
+//   flush()
+LABEL(FLUSH)
+LABEL(flush)
+#if USE_IOSTREAMS
+     std::cout.flush();
+#else
+     // don't need to do anything
+#endif
+     RETURN(FP_alt, PC_ret)
+
+
+//   getchar() : string
+LABEL(GETCHAR)
+LABEL(getchar)
+#if USE_IOSTREAMS
+     {
+     // just stolen from getline and hacked, to make it work
+       char c; word start = next_free_memory; INC_NEXT_FREE_MEMORY_BY(1);
+       if (std::cin.get(c))	 {	\
+	 SETMEM(next_free_memory,c);		\
+	 INC_NEXT_FREE_MEMORY_BY(1);		\
+	 SETMEM(start,1);
+       } else {
+         SETMEM(start,0);
+       }
+       SET(R1, start);
+     }
+     RETURN(FP_alt, PC_ret)
+#else
+     // need to write something to just call MALLOC and then GETCHAR_ORD ... 
+     UNDEFINED()
+#endif
+
+
+// * getline() : string
+LABEL(GETLINE)
+LABEL(getline)
+#if USE_IOSTREAMS
+     {
+       char c; word start = next_free_memory; INC_NEXT_FREE_MEMORY_BY(1);
+       while (std::cin.get(c) && c != '\n') {	\
+	 SETMEM(next_free_memory,c);		\
+	 INC_NEXT_FREE_MEMORY_BY(1);		\
+       }
+       SETMEM(start,next_free_memory-start-1);
+       SET(R1, start);
+     }
+     RETURN(FP_alt, PC_ret)
+#else
+	// THIS is covered in CS356, and not yet updated for no-iostreames in 350; try setting USE_IOSTREAMS
+
+     UNDEFINED()
+
+#endif
+
+#endif /* ! #if ! WROTE_CS356_IO */
+
+
+#if ! WROTE_CS356_MALLOC
+
+// fail if wrapped past 0xffff, hard-coded, but check
+// ** malloc(n_cells: int) : int  // returns address of allocated space
+LABEL(MALLOC) // uses 9, 10, and 11
+LABEL(malloc)
+     // Reg 1  = argument 1 (number of cells needed)
+     // OK to just leave PC_ret as the return address, since we have no calls (except exiting)
+     SET(Rt,first_space_for_fsheap)  // Ok to use R11, aka Rt, since no "not" pseudo-op or register-branches
+     LOAD(R10,0,Rt)	// R10 is address of first free
+     FLAGS(R10)
+   BNZR(fsheap_already_initialized)
+#if defined HERA_C
+     // Hprint("\n\n*** WARNING --- malloc not tested yet\n\n");  ... no longer a problem for good cases, I've done some tests
+#endif
+     MOVE(R10, Rt)
+     INC(R10, 1)      // initialize f.s. heap to its first free element then allocate from there
+     STORE(R10,0,Rt) // defensive programming --- this should be overwritten later and thus dead
+   LABEL(fsheap_already_initialized)
+
+     MOVE(R9, R10)	// Hold on to value to be returned
+     ADD(R10,R10,R1)	// ALLOCATE -- FAIL BELOW IF WRAPPED PAST END OF ADDRESS SPACE OR "last_space_for_fsheap"
+     BCR(malloc_give_up)
+     SET(R1,last_space_for_fsheap)
+     CMP(R10, R1)	// want (unsigned) R10 < R1, so R10-R1 should BORROW, i.e. NOT carry!
+     BCR(malloc_give_up)
+     STORE(R10,0,Rt)   // STORE BACK THE NEXT FREE SPACE
+
+     MOVE(R1,R9)	// Value to be returned was in R9
+     RETURN(FP_alt, PC_ret)	// Normal return from malloc
+
+   LABEL(malloc_inconsistent)
+     SET(R1, malloc_inconsistent_error)
+     BRR(malloc_exit)
+   LABEL(malloc_give_up)
+     SET(R1,malloc_out_of_memory_error)
+   LABEL(malloc_exit)
+     CALL(FP_alt,print)
+     SET(R1,127)
+     CALL(FP_alt,exit)
+     HALT() // shouldn't ever get here     
+
+// ** free(address: int)            // release region returned by above (currently does nothing)
+LABEL(FREE)
+LABEL(free)
+     RETURN(FP_alt, PC_ret)
+
+#endif /* ! WROTE_CS356_MALLOC */
+
+#endif

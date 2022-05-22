@@ -1,0 +1,14 @@
+let
+  function cToF(a:int) : int =
+   (a*9)/5+32
+
+  function diff(a:int, b:int) : int = 
+   let var result := cToF(a)-cToF(b)
+      in if result < 0
+          then -result
+          else result
+    end
+
+in
+  printint(diff(0,10))
+end

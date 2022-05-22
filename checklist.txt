@@ -1,0 +1,9 @@
+nested comment
+bad quote "wefwe\"
+
+type check for for epxression (now just return void )
+
+
+funky stuff:
+commeted out protected stored_parent because break_exp need to find the nearest for/while loop
+type: "string" "int" in ll file - unrecognized rule
